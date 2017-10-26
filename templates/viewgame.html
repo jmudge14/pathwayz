@@ -1,0 +1,78 @@
+{% extends "layouts/default.html" %}
+{% block title %}Pathwayz Game #{{ game_number }}{% endblock %}
+
+{% block head %}
+<script language"javascript">
+// Function to perform a game move
+function move(x, y) {
+    url = "/move/{{ game_number }}/{{ color }}/" + x + "/" + y + "/"
+    if (document.getElementById("move_permanent").checked) {
+        url = url + "true";
+    } else {
+        url = url + "false";
+    }
+    window.location.replace(url)
+}
+
+// Check whether a turn has changed; reload the page if it has.
+function CheckTurnNumber() {
+    x = new XMLHttpRequest();
+    var y = null;
+    x.open( "GET", "/turn/{{ game_number }}", true );
+
+    x.onload = function (e) {
+        y = Number(x.responseText);
+        if (y != {{ turn_number }}) {
+            location.reload();
+        }
+    };
+    x.onerror = alert
+    x.send(null);
+}
+
+// Check occurs once per second.
+var t = setInterval(CheckTurnNumber,1000);
+
+</script>
+{% endblock %}
+
+{% block content %}
+<p>Playing game #{{ game_number }}. You are the {{ color }} player, current player is {{ board_color }}. Currently on the {{ turn_number }}th turn.</p>
+
+{% if game_won %}
+    <h1>{{ game_won }} won the game!</h1>
+{% endif %}
+
+<table border="2px">
+    {% for row in board %}
+        <tr>
+            {% for cell in row %}
+                <td style="width: 50px; height: 50px;">
+                    {% if cell.color %}
+                        <img src="/images/{{ cell.color }}-{% if cell.perm %}P{% else %}R{% endif %}.png"
+                             style="width:100%; height: 100%;">
+                    {% else %}
+                        {% if current_player and not game_won %}
+                            <div onclick="move({{ cell.x }}, {{ cell.y }});"
+                                 style = "width:100%; height: 100%; display: block;
+                                          background-color: lightgray;">
+                            </div>
+                        {% endif %}
+                    {% endif %}
+                </td>
+            {% endfor %}
+        </tr>
+    {% endfor %}
+</table>
+
+{% if current_player %}
+    <label><input type="checkbox" id="move_permanent" unchecked /> Permanent </label>
+{% else %}
+    Waiting for other player to move...
+{% endif %}
+
+<hr>
+<a href="/view/{{ game_number }}/white">Be WHITE</a><br>
+<a href="/view/{{ game_number }}/black">Be BLACK</a><br>
+{% endblock %}
+

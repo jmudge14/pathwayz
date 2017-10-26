@@ -1,0 +1,11 @@
+{% extends "layouts/default.html" %}
+{% block title %}Pathwayz - New Game Created{% endblock %}
+{% block content %}
+<div id="main">
+    <p>Welcome to Pathwayz!</p>
+    <p>A new game has been created for you; the white player always starts first. Please use the below links to find the play screens (copy one for a friend!):</p>
+    <ul> <li> White player: <a href="/view/{{game_number}}/white">White Player</a> </li>
+         <li> Black player: <a href="/view/{{game_number}}/black">Black Player</a> </li>
+    </ul>
+</div>
+{% endblock %}
