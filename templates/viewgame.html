@@ -41,8 +41,14 @@ var t = setInterval(CheckTurnNumber,1000);
 
 {% if game_won %}
     <h1>{{ game_won }} won the game!</h1>
+    <a href="/new">New Game?</a><br>
 {% endif %}
 
+{% if current_player %}
+    <label><input type="checkbox" id="move_permanent" unchecked /> Permanent </label>
+{% else %}
+    Waiting for other player to move...
+{% endif %}
 <table border="2px">
     {% for row in board %}
         <tr>
@@ -64,14 +70,10 @@ var t = setInterval(CheckTurnNumber,1000);
         </tr>
     {% endfor %}
 </table>
-
-{% if current_player %}
-    <label><input type="checkbox" id="move_permanent" unchecked /> Permanent </label>
-{% else %}
-    Waiting for other player to move...
-{% endif %}
+<a href="/">Home</a>
 
 <hr>
+These can be used to switch sides Please don't cheat! ☺ These are here for debugging and solo play. 
 <a href="/view/{{ game_number }}/white">Be WHITE</a><br>
 <a href="/view/{{ game_number }}/black">Be BLACK</a><br>
 {% endblock %}

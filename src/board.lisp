@@ -12,7 +12,8 @@
            :current-player
            :board-contents
            :turn-count
-           :board))
+           :board
+           :legal-moves))
 (in-package :pathwayz.board)
 
 (defclass board ()
@@ -111,11 +112,21 @@
     (when won
       (return-from game-won-p won)))
   ; full check for win status
-  (let ((b (player-won-p board :black))
-        (w (player-won-p board :white)))
+  (let ((b (path-exists-p board :black))
+        (w (path-exists-p board :white)))
     (cond ((and b w)
            (current-player board)) ; current player wins ties
           (b :BLACK)
           (w :WHITE)
           (t nil))))
 
+(defun legal-moves (board)
+  (with-slots (contents current-player) board
+    (let ((result nil))
+      (dotimes (x 12)
+        (dotimes (y 8)
+          (unless (aref contents x y)
+            ; (list x y PERM)
+            (push (list x y nil) result)
+            (push (list x y t) result))))
+      result)))

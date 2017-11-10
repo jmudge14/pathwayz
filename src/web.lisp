@@ -32,6 +32,9 @@
 ;;
 ;; Routing rules
 
+(defroute "/" ()
+  (render #P"index.html"))
+
 (defroute "/new" ()
   (let* ((game-number (next-game-number))
          (game (make-board)))

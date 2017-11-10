@@ -26,9 +26,12 @@
   :components ((:module "src"
                 :components
                 ((:file "main" :depends-on ("config" "view" "db"))
-                 (:file "web" :depends-on ("view"))
+                 (:file "web" :depends-on ("view" "board"))
                  (:file "view" :depends-on ("config"))
                  (:file "db" :depends-on ("config"))
+                 (:file "board")
+                 (:file "learn" :depends-on ("sigmoid"))
+                 (:file "sigmoid")
                  (:file "config"))))
   :description ""
   :in-order-to ((test-op (load-op pathwayz-test))))

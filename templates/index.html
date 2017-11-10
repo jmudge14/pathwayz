@@ -1,7 +1,29 @@
 {% extends "layouts/default.html" %}
 {% block title %}Welcome to Caveman2{% endblock %}
 {% block content %}
-<div id="main">
-  Welcome to <a href="http://8arrow.org/caveman/">Caveman2</a>!
-</div>
+<p>Welcome to Pathwayz - an adaptation of the board game.</p>
+
+<p>Original game, and all credits for rules and design, go to the author: <a href="http://pathwayzgame.com/">Main Website</a>
+I wholeheartedly suggest buying a board if you like this. </p>
+
+<h1><a href="/new">New Game</a></h1>
+<p>On the new game screen, you will be provided links for the white and black players to play. Just give one of these to your opponent, and use the other. Remember, white always goes first.</p>
+
+<h1>Rules</h1>
+<ul> <li> White always starts first. </li>
+     <li> Players take turns. On each turn, the current player may do one of the following:
+         <ol> <li> Place a piece of their own color on any empty square, or </li>
+              <li> Place a <b>permanent</b> piece of their opponent's color on any empty square,
+                   and flip all regular pieces next to it, both their own and their opponent's.
+         </ol>
+         </li>
+     <li> The game is won when a player connects the left and right side (long way) of the play field with a path of their own color.
+          This path may include permanent or regular pieces of their color, connecting in all 8 directions (i.e., including diagonals), and
+          the path may wind as much as needed. If the final piece causes a tie, the player who placed it wins. </li>
+     <li> Full rules: <a href="http://pathwayzgame.com/rules-2/">Official Rules</a>. If this game does not conform to these rules, please send me an e-mail: <a href="mailto:jakykong@theanythingbox.com">jakykong@theanythingbox.com</a> so I can fix it!</li>
+</ul>
+
+
+
 {% endblock %}
+
