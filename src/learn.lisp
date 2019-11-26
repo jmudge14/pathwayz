@@ -2,102 +2,87 @@
 
 (in-package :cl-user)
 (defpackage pathwayz.learn
-  (:use :cl)
+  (:use :cl :pathwayz.sigmoid :pathwayz.board :alexandria)
   (:import-from :pathwayz.config
                 :config)
-
-  (:import-from :pathwayz.sigmoid
-                :make-network
-                :perceive
-                :back-propagate)
-
-  (:import-from :pathwayz.board
-                :make-board
-                :game-won-p
-                :move
-                :current-player
-                :board-contents
-                :turn-count
-                :board
-                :legal-moves)
-  
-  (:import-from :cl-utilities
-                :copy-array)
 
   (:export )) ; fill in export later
 (in-package :pathwayz.learn)
 
+(defun random-move-count ()
+  "A nonlinear distribution biased toward low move counts."
+  (let ((s (random 100)))
+    (cond ((<= s 10) 3)
+          ((<= s 15) 4)
+          ((<= s 20) 5)
+          ((<= s 25) 6)
+          ((<= s 30) 7)
+          ((<= s 35) 8)
+          ((<= s 40) 9)
+          ((<= s 50) 10)
+          ((<= s 60) 15)
+          ((<= s 80) 20)
+          ((<= s 90) 25)
+          ((<= s 95) 30)
+          (t 35))))
 
 
 (defvar *net*)
-(setf *net* (make-network '(110 500 20 1) :weight 0.005 :bias 0.001))
+(setf *net* (make-network '(290 75 50 25 1)
+                          :default-transfer-function 'relu
+                          :default-derivative-function 'relu-d
+                          :max-random-bias 0.01d0
+                          :max-random-weight 0.01d0))
 (defvar *games-played* 0)
 (defvar *board* nil)
-(defvar *non-backprop-moves* 0)
-
-; Reusable array to speed up computations
-(defvar *inputs* (make-array '(110)))
-(defvar *board-places* (make-array '(12 8) :displaced-to *inputs*))
-(defvar *next-move-x* (make-array '(12) :displaced-to *inputs* :displaced-index-offset 96))
-(defvar *next-move-y* (make-array '(8) :displaced-to *inputs* :displaced-index-offset 108))
-(defvar *next-move-piece* (make-array '(1) :displaced-to *inputs* :displaced-index-offset 109))
 
 (defun new-board ()
   "Update the global board with a new one, and relevant variable updates."
-  (setf *board* (make-board)
-        *non-backprop-moves* (random (cond ((<= *games-played* 100) 10)
-                                           ((<= *games-played* 400) 5)
-                                           (t 1))))
+  (setf *board* (make-board))
   (incf *games-played*))
 
-(defun update-inputs ()
-  "Update *inputs* for current board positions"
-  (let ((contents (board-contents *board*)))
+(defun same-color (color1 color2)
+  (if (eq color1 color2) 1.0 0.0))
+
+(defun get-inputs ()
+  "Return input values for current board positions.
+   Total: 290 inputs (= (+ 2 (* 12 8 3)))"
+  (let ((contents (board-contents *board*))
+        (result nil))
     (dotimes (x 12)
       (dotimes (y 8)
-        (let* ((piece (aref contents x y))
-               (color (car piece))
-               (permanent (cdr piece))
-               (piece-value (cond ((not color) 0.0)
-                                  (permanent 1.0)
-                                  (t 0.5)))
-               (board-value (case color
-                              (:white piece-value)
-                              (:black (- piece-value)))))
-          (setf (aref *board-places* x y) board-value))))))
-
-(defun set-next-move (x y permanent)
-  "Update input array to the given next move. Use nil nil nil to reset."
-  (dotimes (cx 12)
-    (setf (aref *next-move-x* cx)
-          (if (and x (= cx x)) 1.0 0.0)))
-  (dotimes (cy 8)
-    (setf (aref *next-move-y* cy)
-          (if (and y (= cy y)) 1.0 0.0)))
-  (setf (aref *next-move-perm* 0)
-        (if permanent 1.0 0.0))
-  (setf (aref *next-move-white* 0)
-        (case (current-player *board*) (:white 1.0) (:black 0.0)))
-  (setf (aref *next-move-black* 0)
-        (case (current-player *board*) (:white 0.0) (:black 1.0))))
+         (let* ((piece (aref contents x y))
+                (color (car piece))
+                (permanent (cdr piece)))
+           (push (same-color :black color) result) ; black active
+           (push (same-color :white color) result) ; white active
+           (push (if permanent 1.0 0.0) result)))) ; permanent or not
+    ; Marker for current player
+    (push (same-color :black (current-player *board*)) result)
+    (push (same-color :white (current-player *board*)) result)
+    result))
 
 
-(defun read-input ()
-  (first (perceive *net* *inputs*)))
+(defun read-input (inputs)
+  (first (propagate *net* inputs)))
 
-(defun backprop-input (inputs val &key (eta 0.1))
-  (back-propagate *net* inputs (list val) :eta eta))
+(defun backprop-input (inputs val)
+  (back-propagate *net* (list val) inputs))
 
 
 (defun get-move-scores ()
   "Get all legal moves, sorted in score order according to current player"
-  (let* ((moves (legal-moves *board*))
+  (let* ((moves (random-shuffle (legal-moves *board*)))
          (move-scores (map 'list (lambda (m)
                                    (let ((x (first m))
                                          (y (second m))
                                          (perm (third m)))
-                                     (set-next-move x y perm)
-                                     (cons (read-input) m)))
+                                     (let ((inputs (prog2 (move *board* x y perm)
+                                                          (get-inputs)
+                                                          (undo-move *board*))))
+                                       (list (read-input inputs)
+                                             inputs
+                                             m))))
                            moves)))
     (setf move-scores 
           (sort move-scores
@@ -107,7 +92,8 @@
     move-scores))
 
 (defun find-best-move ()
-  (first (get-move-scores)))
+  (let ((possible-moves (get-move-scores)))
+    (first possible-moves)))
 
 (defun random-shuffle (sequence)
   (map-into sequence #'car
@@ -116,120 +102,135 @@
                        sequence)
                   #'< :key #'cdr)))
 
-(defun train-game (intended-winner random-move-seed)
-  (format t "~%New game, no. ~A~%" *games-played*)
-  (new-board)
-  (let ((played-moves nil)
-        (random-move-count (random random-move-seed)))
-    ; play some number of untrained moves
-    (format t "Initial Random Moves: ~A~%" random-move-count)
-    (dotimes (mn random-move-count)
-      (let ((m (first (coerce (random-shuffle (legal-moves *board*)) 'list))))
-        (push m played-moves)
-        (apply #'move *board* m)))
-    ;(format t "Computer's first move for player ~A~%" (current-player *board*))
-    (format t "Computer's goal: ~A~%" intended-winner)
-    ; play until game end - train each move
-    (format t "Playing to end of game...~%")
-    (update-inputs)
-    (loop until (game-won-p *board*) do
-          (update-inputs)
-          (let* ((move (find-best-move)))
-            (unless move 
-              (format t "Game was a tie, not training.~%~%")
-              (return-from train-game nil))
-            ;(format t "Move: ~A ~A's turn~%" move (current-player *board*))
-            (push (rest move) played-moves)
-            (apply #'move *board* (rest move))))
-    (pretty-print-board *board*)
-    (unless (eq (game-won-p *board*)
-                intended-winner)
-      (format t "Game lost by computer. Not training.~%")
-      (return-from train-game nil))
-    (format t "~A won. Training...~%" (game-won-p *board*))
-    (let ((train-score (case (game-won-p *board*)
-                             (:white 1.0)
-                             (:black 0.0)))
-          (train-eta (* 0.05
-                        (- 96 (length played-moves))))
-          (train-moves (reverse played-moves))
-          (*board* (make-board)))
-      (dotimes (n random-move-count)
-        (apply #'move *board* (pop train-moves)))
-      (loop for m in train-moves do
-            (update-inputs)
-            (apply #'set-next-move m)
-            (backprop-input *inputs* train-score :eta train-eta))
-      t)))
-
-
-
-(defun train-game-old ()
-  (format t "~%New game, no. ~A~%" *games-played*)
-  (new-board)
-  ; play some number of untrained moves
-  (let ((random-move-count (random 20)))
-    (format t "Initial Random Moves: ~A~%" random-move-count)
-    (dotimes (mn random-move-count)
-      (let ((m (first (coerce (random-shuffle (legal-moves *board*)) 'list))))
-        (apply #'move *board* m))))
-  ;(format t "Computer plays ~A~%" (current-player *board*))
-  ; play until game end - train each move
-  (update-inputs)
-  (format t "Playing to end of game...~%")
-  (loop until (game-won-p *board*) do
-        (update-inputs)
-        (let* ((move (find-best-move))
-               save-inputs)
-          (unless move (return-from train-game-old nil))
-          ;(format t "Move: ~A ~A's turn~%" move (current-player *board*))
-          (apply #'set-next-move (rest move))
-          (setf save-inputs (copy-array *inputs*))
-          (apply #'move *board* (rest move))
-          (if (game-won-p *board*)
-            (cond ((eq (current-player *board*) (game-won-p *board*))
-                   (format t "Winning move for current player. Rewarding.")
-                   (backprop-input save-inputs
-                                   (case (current-player *board*)
-                                     (:white 1.0)
-                                     (:black 0.0))
-                                   :eta 1.5))
-                  (t (format t "Made opponent win. Gently encouraging different behavior.")
-                     (backprop-input save-inputs
-                                     (case (current-player *board*)
-                                       (:white 0.0)
-                                       (:black 1.0))
-                                     :eta 1.5)))
-            (progn (update-inputs)
-                   (set-next-move nil nil nil)
-                   (backprop-input save-inputs 
-                                   (read-input) 
-                                   :eta 0.1)))))
-  (pretty-print-board *board*))
-
-
-(defun pretty-print-board (board)
-  "Display a board nicely, as a grid.
-   Colors are represented as Q/@ for white, S/$ for black, regular and permanent respectively."
-  (let* ((contents (board-contents board)))
-    (dotimes (y 8)
-      (dotimes (x 12)
-        (let* ((m (aref contents x y))
-               (c (car m))
-               (p (cdr m)))
-          (write-char (case c
-                        (:white (if p #\@ #\Q))
-                        (:black (if p #\$ #\S))
-                        (t #\.)))))
-        (terpri))))
-
 (defun training-loop ()
-  (loop (loop for i = 10 then (1+ i)
-              until (train-game :white i))
-        (loop for i = 10 then (1+ i)
-              until (train-game :black i))))
+  (loop (setf *print-all-moves* nil) 
+        (loop repeat 10 do 
+              (train-game)
+              (pretty-print-board *board*))
+        (setf *print-all-moves* t)
+        (train-game)
+        (pretty-print-board *board*)))
+
+(defvar *random-win-count* 0)
+(defvar *print-all-moves* t)
+(defun train-game ()
+  (new-board)
+  (let ((last-white-move nil)
+        (last-black-move nil))
+    ; To add some stochasticness to the game, play some random moves first
+    (loop repeat (* 2 (random-move-count)) do  ; even so white ends up playing first
+          (apply #'move *board* (random-move)))
+    
+    (when (game-won-p *board*) 
+      (format t "Random moves ended game.~%")
+      (return-from train-game))
+
+    ; move white - first "real" turn
+    (setf last-white-move (list 0.0 '() (random-move)))
+    (when *print-all-moves* 
+      (format t "Next move: ~A ~A~%" (third last-white-move) (current-player *board*)))
+    (apply #'move *board* (third last-white-move))
+
+    (when (game-won-p *board*) 
+      (format t "Game ended too soon for training.")
+      (return-from train-game))
+
+    ; move black - first "real" turn
+    (setf last-black-move (list 0.0 '() (random-move)))
+    (when *print-all-moves* 
+      (format t "Next move: ~A ~A~%" (third last-black-move) (current-player *board*)))
+    (apply #'move *board* (third last-black-move)) 
+
+    (when *print-all-moves* (pretty-print-board *board*))
+
+    ; if the above moves somehow won the game, end here.
+    (when (game-won-p *board*)
+      (format t "~%**********~%GAME WON ON INITIAL TURNS. NUMBER: ~A**********~%" 
+              (incf *random-win-count*)))
+
+    ; Train on moves until game is won
+    (loop for color = (current-player *board*) then (current-player *board*)
+          until (game-won-p *board*) do
+          ; move and train this color
+          (let ((current-move (find-best-move)))
+              (when (null current-move) ; tie
+                (format t "TIE -- buzzing.~%")
+                (buzz *net* 100)
+                (return-from train-game))
+              (when *print-all-moves* 
+                (format t "*Next move: ~A ~A~%" (third current-move) (current-player *board*)))
+              (apply #'move *board* (third current-move))
+              (when *print-all-moves* (pretty-print-board *board*))
+              (let ((inp (list (read-input (get-inputs)))))
+                (cond ((eq color :white)
+                       (back-propagate *net* inp (second last-white-move))
+                       (setf last-white-move current-move))
+                      (t (back-propagate *net* inp (second last-black-move))
+                       (setf last-black-move current-move))))))
+    
+    ; Train the winning board position
+    (format t "Winner: ~A~%" (game-won-p *board*))
+    (back-propagate *net* 
+                    (list (if (eq :black (game-won-p *board*)) 0.0 1.0))
+                    (get-inputs)
+                    0.9d0
+                    )))
 
 
+(defun random-move ()
+  (first (coerce (random-shuffle (legal-moves *board*)) 'list)))
+
+(defun generate-random-winning-game ()
+  (loop 
+    (let ((*board* (make-board)))
+      (loop for move = (random-move) then (random-move)
+            for move-count = 0 then (1+ move-count)
+            collect move into moves
+            do 
+            (unless move
+              (return nil))
+            (apply #'move *board* move)
+            (if (game-won-p *board*)
+              (return-from generate-random-winning-game
+                           (list move-count
+                                 (game-won-p *board*)
+                                 moves)))))))
+
+(defun train-last-n-moves (last-n winner movelist)
+  "Trains on the last-n moves of movelist, including the winner"
+  (let ((*board* (make-board)))
+    (terpri)
+    ; skip training on all but last-n moves
+    (loop until (= last-n (length movelist))
+          for move = (pop movelist)
+          do (format t ".")
+             (apply #'move *board* move))
+    ; train winner for remainder of game
+    (loop until (null movelist)
+          with val = (list (case winner (:black 0.0d0) (:white 1.0d0)))
+          for move = (pop movelist)
+          do (format t "@")
+             (apply #'move *board* move)
+             (back-propagate *net* val (get-inputs)))))
+
+(defun n-or-less-games (n maxtries)
+  (loop repeat maxtries
+        for g = (generate-random-winning-game)
+        if (<= (first g) n) collect g))
+
+(defun train-random-games (&optional (batch-size 10000) (game-length 60) (last-n 10) (max-batches 1))
+  (loop for i = 1 then (1+ i) 
+        until (> i max-batches) do
+    (format t "~A Batch of ~A. ~%" i batch-size)
+    (loop for g in (n-or-less-games game-length batch-size) do 
+          (train-last-n-moves last-n (second g) (third g)))
+    ; Conventional game to observe current state
+    (terpri)
+    (train-game)
+    (pretty-print-board *board*)))
+
+
+#|
 (defun play-computer-game (num)
      "Development tool - connect current net to an existing board on the Pathwayz web service"
      (new-board)
@@ -240,4 +241,4 @@
                         do (if (game-won-p *board*) (return-from :a nil)))
                   (apply #'move *board* (rest (print (find-best-move)))))))
 
-
+|#

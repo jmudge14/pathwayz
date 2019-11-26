@@ -3,145 +3,249 @@
   (:use :cl)
   (:import-from :pathwayz.config
                 :config)
-  (:export :make-network 
-           :perceive
+  (:import-from :cl-store
+                :store
+                :restore)
+  (:import-from :alexandria
+                :iota
+                :map-iota
+                :clamp
+                )
+  (:export :nnode
+           :make-network
+           :make-network
+           :set-input
+           :propagate
+           :+eta+
            :back-propagate
-           :input-size))
+           :buzz
+           :save-net
+           :load-net
+           :sigmoid
+           :sigmoid-d
+           :leaky-relu
+           :leaky-relu-d
+           :relu
+           :relu-d
+           :tanh-d
+           ))
 (in-package :pathwayz.sigmoid)
 
-(defun sigmoid (z)
-  (declare (optimize (safety 0) (speed 3))
-           (type float z))
-  (handler-case (/ 1 (+ 1 (exp (- z))))
+
+(defclass nnode ()
+  ((parents :accessor nnparents :initform nil
+            :documentation "List of parent nodes")
+   (parent-count :accessor nnparent-count :initform 0)
+   (children :accessor nnchildren :initform nil
+             :documentation "List of child nodes")
+   (children-count :accessor nnchild-count :initform 0)
+   (weights :accessor nnweights :initform nil
+            :documentation "List of input weights")
+   (bias :accessor nnbias :initarg :bias :initform 0.0d0
+         :documentation "Bias value for node")
+   (output :accessor nnoutput :initform 00.0
+           :documentation "Last recorded output from this node")
+   (delta :accessor nndelta :initform 0.0
+          :documentation "Last recorded delta value for this node")
+   (transfer :accessor nntransfer :initarg :trans
+             :documentation "Transfer function used for this node")
+   (deriv :accessor nnderiv :initarg :deriv
+          :documentation "Derivative of transfer function, used during back propagation"))
+  (:documentation "Defines a single node in a neural network, in full detail."))
+
+
+(defun coerce-function (obj)
+  "Force an object to be a function if it is a symbol."
+  (if (symbolp obj)
+    (symbol-function obj)
+    obj))
+
+(defmethod nn-connect ((parent nnode) (child nnode) &optional (max-random-weight 1.0d0))
+  "Connect two nodes in a feed-forward fashion"
+  (push child (nnchildren parent))
+  (push parent (nnparents child))
+  (setf (nnweights child)
+        (if (nnweights child)
+          (adjust-array (nnweights child) (list (length (nnparents child))))
+          (make-array (list (length (nnparents child))) :adjustable t :initial-element 0.0d0)))
+  (setf (aref (nnweights child) (1- (length (nnparents child))))
+        (random max-random-weight))
+  (incf (nnparent-count child))
+  (incf (nnchild-count parent)))
+
+(defun make-network (layers &key (max-random-weight 1.0d0) (max-random-bias 1.0d0) 
+                                 (default-transfer-function 'sigmoid) 
+                                 (default-derivative-function 'sigmoid-d))
+  "Make a randomized network. Each layer may be either an integer to 
+   use default transfer function, or a list of (size transfer-func derivative-func)"
+  (let* ((tfunc (coerce-function default-transfer-function))
+         (dfunc (coerce-function default-derivative-function)))
+    (labels ((make-empty-node (&optional tf df)
+               (make-instance 'nnode 
+                              :bias (random max-random-bias)
+                              :trans (or tf tfunc)
+                              :deriv (or df dfunc)))
+             (make-layer (layer-defn)
+               (if (listp layer-defn)
+                 (let ((n (first layer-defn))
+                       (tf (coerce-function (second layer-defn)))
+                       (df (coerce-function (third layer-defn))))
+                   (map 'list
+                        (lambda (n)
+                               (declare (ignore n))
+                               (make-empty-node tf df))
+                        (iota n)))
+                 (map 'list 
+                      (lambda (n)
+                        (declare (ignore n))
+                        (make-empty-node))
+                      (iota layer-defn)))))
+      (let ((net (map 'list #'make-layer layers)))
+        ; Fully connect layers
+        (do ((ln net (rest ln)))
+          ((null ln))
+          (dolist (la1 (first ln))
+            (dolist (la2 (second ln))
+              (nn-connect la1 la2 max-random-weight))))
+        ; Return network
+        net))))
+
+
+(defmethod set-input ((node nnode) input-value)
+  (with-slots (transfer output) node
+    (setf output (funcall transfer input-value))))
+
+(defmethod prop-node ((node nnode))
+  (with-slots (parents weights bias output transfer) node
+    (setf output
+          (funcall transfer 
+                   (+ bias
+                      (reduce #'+ 
+                              (map 'list 
+                                   (lambda (p w) 
+                                     (* (nnoutput p) w))
+                                   parents weights)))))))
+
+(defun propagate (net inputs)
+  (map 'list #'set-input (first net) inputs) 
+  (dolist (layer (rest net))
+    (dolist (node layer)
+      (prop-node node)))
+  (map 'list #'nnoutput (first (last net))))
+
+
+(defparameter +eta+ 0.1d0)
+
+(defmethod update-output-delta ((node nnode) expected-output)
+  (with-slots (delta deriv output) node
+    (setf delta (* (- output expected-output)
+                   (funcall deriv output)))))
+
+(defmethod update-hidden-delta ((node nnode) parent-weight-index)
+  "Update delta value for hidden layer. Note that parent-weight-index is an optimization
+   to avoid needing to search for the parent on each call, since it's a tight loop."
+  (with-slots (delta children output deriv) node
+    (setf delta
+          (* (funcall deriv output)
+             (reduce #'+ (map 'list 
+                              (lambda (cnode) 
+                                (with-slots (weights delta) cnode
+                                  (* delta (aref weights parent-weight-index))))
+                              children))))))
+
+
+(defun buzz (net &optional (freq 1000))
+  "Randomly set a few weights to random ~~ 0"
+  (format t "BUZZ~%")
+  (dolist  (layer net)
+    (dolist (node layer)
+      (map-into (nnweights node)
+                (lambda (w)
+                  (if (= (random freq) 1)
+                    0.0d0 w))
+                (nnweights node)))))
+
+(defun back-propagate (net expected-outputs &optional (inputs nil) (eta nil))
+  (when inputs (propagate net inputs)) ; (optionally) forward propagate inputs
+  (let ((bnet (reverse net))
+        (r-eta (or eta +eta+)))
+    ; calculate deltas for output nodes
+    (map 'list #'update-output-delta (first bnet) expected-outputs)
+    ; calculate hidden layer deltas for the remainder of the list except parents
+    (dolist (layer (butlast (rest bnet)))
+      (do* ((nodes layer (rest nodes))
+            (node (first nodes) (first nodes))
+            (index 0 (1+ index)))
+        ((null node))
+        (update-hidden-delta node index)))
+    ; update weights and biases for each node
+    (dolist (layer bnet)
+      (dolist (node layer)
+        (with-slots (weights bias delta parents) node
+          (map-into weights
+                    (lambda (w p)
+                      (clamp (- w (* r-eta delta (nnoutput p)))
+                             -100.0d0 100.0d0))
+                    weights parents)
+          (setf bias (- bias (* r-eta delta))))))))
+
+
+
+
+
+(defun train-maximizer (&optional (net nil))
+  " Test function that returns a sample maximizing neural net, trained for 10,000 iterations. "
+  (let ((inet (or net (make-network '(3 10 3)))))
+    (dotimes (i 100000 inet)
+      (let* ((num-a (random 1.0d0))
+             (num-b (random 1.0d0))
+             (num-c (random 1.0d0))
+             (biggest (max num-a num-b num-c)))
+        (back-propagate inet
+                        (list (if (= num-a biggest) 1.0d0 0.0d0)
+                              (if (= num-b biggest) 1.0d0 0.0d0)
+                              (if (= num-c biggest) 1.0d0 0.0d0))
+                        (list num-a num-b num-c))))))
+
+(defun save-net (net filename)
+  (store net filename))
+
+(defmethod load-net (filename)
+  (restore filename))
+
+
+(defun sigmoid (output)
+  (handler-case (/ 1.0d0 (+ 1.0d0 (exp (- output))))
     (floating-point-overflow (ex)
       (declare (ignore ex))
-      (if (minusp z)
-        0.0
-        1.0))))
+      (if (minusp output)
+        0.0d0
+        1.0d0))))
+
+(defun sigmoid-d (last-output)
+  (* last-output
+     (- 1.0d0 last-output)))
 
 
-(defclass neural-network ()
-  ((layers :accessor net-layers :initarg :layers)
-   (lcount :accessor net-lcount :initarg :lcount)
-   (weights :accessor net-weights :initarg :weights)
-   (biases :accessor net-biases :initarg :biases)
-   (last-outputs :accessor last-outputs :initarg :last-outputs)
-   (namblas :accessor net-namblas :initarg :namblas)))
+(defun leaky-relu (output)
+  (if (>= output 0)
+    output
+    (/ output 100.0d0)))
+(defun leaky-relu-d (last-output)
+  (if (>= last-output 0)
+    1.0d0
+    0.1d0))
 
-(defun make-network (layers &key (weight 1.0) (bias 1.0))
-  (declare (optimize (safety 0) (speed 3)))
-  (let* ((rel-layers (make-array (list (length layers))
-                                 :initial-contents layers
-                                 :element-type 'integer))
-         (lcount (length layers))
-         (max-layer (apply #'max layers))
-         (weights (make-array (list lcount max-layer max-layer) 
-                              :element-type 'float
-                              :initial-element 0.0))
-         (biases (make-array (list lcount max-layer) 
-                             :element-type 'float
-                             :initial-element 0.0))
-         ; For back-propagation, pre-allocated arrays:
-         (last-outputs (make-array (list lcount max-layer) 
-                                   :element-type 'float
-                                   :initial-element 0.0))
-         (namblas (make-array (list lcount max-layer) 
-                              :element-type 'float
-                              :initial-element 0.0)))
-    ; randomize weights
-    (dotimes (i (array-total-size weights))
-      (setf (row-major-aref weights i)
-            (random weight)))
-    ; randomize biases
-    (dotimes (i (array-total-size biases))
-      (setf (row-major-aref biases i)
-            (random bias)))
-    ; return value - a new neural network!
-    (make-instance 'neural-network 
-                   :layers rel-layers 
-                   :lcount lcount 
-                   :weights weights 
-                   :biases biases 
-                   :last-outputs last-outputs
-                   :namblas namblas)))
+(defun relu (output)
+  (if (>= output 0)
+    output
+    0.0d0))
+(defun relu-d (last-output)
+  (if (>= last-output 0) 1.0d0 0.0d0))
 
-(defmethod input-size ((network neural-network))
-  (declare (optimize (safety 0) (speed 3)))
-  (aref (net-layers network) 0))
+(defun tanh-d (last-output)
+  (let ((th (tanh last-output)))
+    (- 1.0d0 (* th th))))
 
-(defmethod layer-size ((network neural-network) layer)
-  "Maximum index for a given layer"
-  (declare (optimize (safety 0) (speed 3)))
-  (1- (aref (net-layers network) layer)))
-
-(defmacro net-bias (network layer cell)
-  `(aref (net-biases ,network) ,layer ,cell))
-
-(defmacro net-weight (network layer col index)
-  `(aref (net-weights ,network) ,layer ,col ,index))
-
-(defmacro last-output (network layer col)
-  `(aref (last-outputs ,network) ,layer ,col))
-
-(defmacro net-nambla (network layer col)
-  `(aref (net-namblas ,network) ,layer ,col))
-
-(defmethod perceive ((network neural-network) inputs)
-  (declare (optimize (safety 0) (speed 3))
-           (type (vector float) inputs))
-  (unless (= (length inputs) (input-size network))
-    (error "Input length must match network input size."))
-  (dotimes (layer (net-lcount network))
-    (dotimes (col (1+ (layer-size network layer)))
-      (setf (last-output network layer col)
-            (if (= layer 0)
-              (elt inputs col)
-              (sigmoid (+ (net-bias network layer col)
-                          (loop for i from 0 upto (layer-size network (1- layer))
-                                summing (* (last-output network (1- layer) i)
-                                           (net-weight network layer col i)))))))))
-  ; return outputs - efficiently
-  (loop with o = (last-outputs network)
-        with l = (1- (net-lcount network))
-        for i from 0 upto (layer-size network l)
-        collect (aref o l i)))
-
-
-(defun back-propagate (network inputs desired-outputs &key (eta 0.1))
-  "Back-propagate to update the given network toward the given desired-outputs."
-  (declare (optimize (safety 0) (speed 3))
-           (type (vector float *) inputs desired-outputs)
-           (type float eta))
-  (let* ((last-layer (1- (net-lcount network))))
-    ; Phase 1 - Forward pass
-    (perceive network inputs)
-
-    ; Phase 2 - Calculate nambla values for output layer
-    (loop for layer from last-layer downto 1 do
-          (loop for col from 0 upto  (layer-size network layer)do
-                (let* ((output (last-output network layer col)))
-                  (setf (net-nambla network layer col)
-                        (* output
-                           (- 1 output)
-                           (if (= layer last-layer)
-                             (- output (aref desired-outputs col))
-                             (loop for i from 0 upto (layer-size network (1+ layer))
-                                   summing (* (net-nambla network (1+ layer) i)
-                                              (net-weight network (1+ layer) col i)))))))))
-    ; Phase 3 - Update
-    (loop for layer from last-layer downto 1 do ; ignore input layer
-          (loop for col from 0 upto  (layer-size network layer)
-                for nambla = (net-nambla network layer col) do
-                ; update biases
-                (setf (net-bias network layer col)
-                      (+ (net-bias network layer col)
-                         (* (- eta) nambla)))
-                ; update weights
-                (loop for ind from 0 upto  (layer-size network (1- layer))do
-                      (setf (net-weight network layer col ind)
-                            (+ (net-weight network layer col ind)
-                               (* (- eta)
-                                  nambla
-                                  (last-output network (1- layer) ind)))))))))
 
 

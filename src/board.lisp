@@ -12,8 +12,11 @@
            :current-player
            :board-contents
            :turn-count
+           :toggle-color
            :board
-           :legal-moves))
+           :legal-moves
+           :undo-move
+           :pretty-print-board))
 (in-package :pathwayz.board)
 
 (defclass board ()
@@ -23,7 +26,8 @@
            :initform :white)
    (won :initform nil)
    (turn-count :accessor turn-count
-               :initform 0)))
+               :initform 0)
+   (last-move :initform nil)))
 
 (defun make-board ()
   (make-instance 'board))
@@ -58,7 +62,7 @@
   "Perform a game move. Game moves mean placing a piece, either permanent or not,
    on any empty board position, then if permanent, flipping all surrounding
    non-permanent piece colors"
-  (with-slots (contents player won) b
+  (with-slots (contents player won last-move) b
     (when (or (aref contents x y)
               won)
       (return-from move nil))
@@ -77,12 +81,33 @@
       (setf (aref contents x y)
             (cons player nil)))
     (setf won (game-won-p b))
-    (toggle-player b)
+    (unless won (toggle-player b))
+    (incf (turn-count b)) 
+    (setf last-move (list x y permanent))
     t))
 
-(defmethod move :after ((b board) x y permanent)
-  "Track number of turns for the game"
-  (incf (turn-count b)))
+(defmethod undo-move ((b board))
+  "Perform a game move. Game moves mean placing a piece, either permanent or not,
+   on any empty board position, then if permanent, flipping all surrounding
+   non-permanent piece colors"
+  (with-slots (contents player won last-move) b
+    (let ((x (first last-move))
+          (y (second last-move))
+          (permanent (third last-move)))
+      (setf (aref contents x y) nil) ; clear piece
+      (unless won (toggle-player b))
+      (decf (turn-count b)) 
+      (setf last-move nil) 
+      (if permanent
+        (symbol-macrolet ((piece (aref contents cx cy)))
+          (do-offsets directions x y
+                      (when (and piece 
+                                 (not (cdr piece)))
+                        (setf piece (cons (toggle-color (car piece)) 
+                                          nil))))))
+      (setf won nil) ; if undoing a move, they can't have won anymore
+      ) 
+    t))
 
 (defun path-exists-p (board color)
   "Check whether a path exists for a given color from board edge to board edge."
@@ -130,3 +155,18 @@
             (push (list x y nil) result)
             (push (list x y t) result))))
       result)))
+
+(defun pretty-print-board (board)
+  "Display a board nicely, as a grid.
+   Colors are represented as Q/@ for white, S/$ for black, regular and permanent respectively."
+  (let* ((contents (board-contents board)))
+    (dotimes (y 8)
+      (dotimes (x 12)
+        (let* ((m (aref contents x y))
+               (c (car m))
+               (p (cdr m)))
+          (write-char (case c
+                        (:white (if p #\@ #\Q))
+                        (:black (if p #\$ #\S))
+                        (t #\.)))))
+        (terpri))))
