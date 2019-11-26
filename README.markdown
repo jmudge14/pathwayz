@@ -1,5 +1,10 @@
 # pathwayz
 
+Implements a basic web version of the Pathwayz board game.
+
+In addition, it implements the start of a primitive neural network as one attempt to create an AI player. Read sigmoid.lisp if interested, but this is not particularly useful in its current state. (It will, however, "learn" to play, poorly - never gets much past simply making legal moves.)
+
+
 
 
 ## Usage
