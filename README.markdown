@@ -23,7 +23,7 @@ This will run the service in a separate thread, which by default is at http://lo
 
 ## Copyright
 
-Copyright (c) 2017 Jack Mudge (jakykong@theanythingbox.com)
+Copyright (c) 2017 Jack Mudge (jmudge14@gmail.com)
 
 ## License
 
