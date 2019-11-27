@@ -19,7 +19,7 @@ This will run the service in a separate thread, which by default is at http://lo
 
 ## Author
 
-* Jack Mudge <jakykong@theanythingbox.com>
+* Jack Mudge <jmudge14@gmail.com>
 
 ## Copyright
 
